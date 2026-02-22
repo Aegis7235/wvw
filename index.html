@@ -4,17 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WvW Guild Monitor — GW2</title>
-
-<!-- Open Graph / Discord Embed -->
-<meta property="og:type"        content="website">
-<meta property="og:url"         content="https://aegis7235.github.io/wvw/">
-<meta property="og:title"       content="⚔ WvW Guild Monitor — GW2">
-<meta property="og:description" content="Track your alliances & guilds across all NA WvW matchups. Weekly matchup scores, VP standings and guild breakdown — updated live.">
-<meta property="og:site_name"   content="WvW Guild Monitor">
-<meta property="og:image"       content="https://aegis7235.github.io/wvw/image.png">
-<meta property="og:image:width"  content="1200">
-<meta property="og:image:height" content="630">
-<meta name="theme-color"         content="#d4a942">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 /* ══════════════════════════════════════════════
@@ -482,21 +471,21 @@ h1::after {
 }
 .team-score {
   font-family: var(--font-hud);
-  font-size: 1.15rem;
-  font-weight: 700;
-  line-height: 1;
-}
-.team.red   .team-score { color: var(--red-text); }
-.team.blue  .team-score { color: var(--blue-text); }
-.team.green .team-score { color: var(--green-text); }
-
-.vp {
-  font-family: var(--font-hud);
   font-size: .5rem;
   letter-spacing: .08em;
   color: var(--muted);
   font-weight: 400;
 }
+
+.vp {
+  font-family: var(--font-hud);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.team.red   .vp { color: var(--red-text); }
+.team.blue  .vp { color: var(--blue-text); }
+.team.green .vp { color: var(--green-text); }
 
 /* ── GLOW BG ON TEAM HOVER ── */
 .team.red   { background: linear-gradient(90deg, rgba(192,57,46,0.05) 0%, transparent 100%); }
@@ -921,6 +910,39 @@ function parseSheet(csvText) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// STATIC WvW TEAM ID → NAME MAP (from GW2 wiki, no API endpoint)
+// ═══════════════════════════════════════════════════════════════
+const WVW_TEAM_NAMES = {
+  "11001": "Moogooloo",
+  "11002": "Rall's Rest",
+  "11003": "Domain of Torment",
+  "11004": "Yohlon Haven",
+  "11005": "Tombs of Drascir",
+  "11006": "Hall of Judgment",
+  "11007": "Throne of Balthazar",
+  "11008": "Dwayna's Temple",
+  "11009": "Abaddon's Prison",
+  "11010": "Cathedral of Blood",
+  "11011": "Lutgardis Conservatory",
+  "11012": "Mosswood",
+  "12001": "Skrittsburgh",
+  "12002": "Fortune's Vale",
+  "12003": "Silent Woods",
+  "12004": "Ettin's Back",
+  "12005": "Domain of Anguish",
+  "12006": "Palawadan",
+  "12007": "Bloodstone Gulch",
+  "12008": "Frost Citadel",
+  "12009": "Dragrimmar",
+  "12010": "Grenth's Door",
+  "12011": "Mirror of Lyssa",
+  "12012": "Melandru's Dome",
+  "12013": "Kormir's Library",
+  "12014": "Great House Aviary",
+  "12015": "Bava Nisos",
+};
+
+// ═══════════════════════════════════════════════════════════════
 // MAIN
 // ═══════════════════════════════════════════════════════════════
 let allianceData = [];
@@ -1010,7 +1032,15 @@ async function init() {
       }
     }
 
-    renderGrid(matches, tierAllianceMap, worldNames);
+    // Build teamId map: matchId → color → teamId
+    // naWvWGuilds is { guild_id → team_id }
+    const matchColorTeamId = {};
+    naIds.forEach(id => { matchColorTeamId[id] = { red: null, blue: null, green: null }; });
+
+    // For each alliance already placed in a tier, look up its team_id
+    // We do this after tierAllianceMap is built, so we do a second pass below.
+
+    renderGrid(matches, tierAllianceMap, worldNames, naWvWGuilds);
 
     let placed = 0;
     Object.values(tierAllianceMap).forEach(t =>
@@ -1040,21 +1070,34 @@ async function init() {
 // ═══════════════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════════════
-function renderGrid(matches, tierAllianceMap, worldNames) {
+function renderGrid(matches, tierAllianceMap, worldNames, naWvWGuilds) {
   const grid = document.createElement('div');
   grid.className = 'tiers-grid';
-  matches.forEach((m, i) => grid.appendChild(buildCard(m, i+1, tierAllianceMap[m.id], worldNames)));
+  matches.forEach((m, i) => grid.appendChild(buildCard(m, i+1, tierAllianceMap[m.id], worldNames, naWvWGuilds)));
   document.getElementById('app').innerHTML = '';
   document.getElementById('app').appendChild(grid);
 }
 
-function buildCard(match, tierNum, alliancesPerColor, worldNames) {
+function buildCard(match, tierNum, alliancesPerColor, worldNames, naWvWGuilds) {
   const sc  = match.scores;
   const vp  = match.victory_points || {};
   const tot = (sc.red||0) + (sc.blue||0) + (sc.green||0);
   const end = new Date(match.end_time).toLocaleDateString('en-US', {day:'2-digit', month:'2-digit'});
 
   function primaryWorld(color) {
+    // Try to get the WvW team name via naWvWGuilds (guild_id → team_id) for alliances in this color
+    const alliances = alliancesPerColor[color] || [];
+    for (const a of alliances) {
+      const teamId = (naWvWGuilds && (
+        naWvWGuilds[a.allianceId.toUpperCase()] ||
+        naWvWGuilds[a.allianceId.toLowerCase()] ||
+        naWvWGuilds[a.allianceId]
+      ));
+      if (teamId && WVW_TEAM_NAMES[String(teamId)]) {
+        return WVW_TEAM_NAMES[String(teamId)];
+      }
+    }
+    // Fallback: old world name from match API
     const wids = match.worlds[color] ? [match.worlds[color]] : (match.all_worlds[color]||[]);
     return worldNames[String(wids[0])] || '—';
   }
@@ -1119,8 +1162,8 @@ function buildCard(match, tierNum, alliancesPerColor, worldNames) {
             <span class="color-badge">${colorLabel[color]}</span>
             <span class="team-world">${primaryWorld(color)}</span>
             <div class="team-scores">
-              <span class="team-score">${fmt(sc[color])}</span>
               <span class="vp">${vp[color]||0} VP</span>
+              <span class="team-score">${fmt(sc[color])}</span>
             </div>
           </div>
           ${blocksHtml}
